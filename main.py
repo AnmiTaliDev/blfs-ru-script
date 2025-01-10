@@ -1,6 +1,6 @@
 import os
 import re
-from deep_translator import GoogleTranslator
+from translate import Translator
 from bs4 import BeautifulSoup
 import shutil
 import logging
@@ -28,11 +28,13 @@ def translate_text(text, src_lang='en', dest_lang='ru'):
     if not text:
         return text
 
+    translator = Translator(from_lang=src_lang, to_lang=dest_lang)
+    
     # Регулярные выражения для поиска имен, архивов, ссылок и команд
     patterns = [
-        r'`[^`]+`',               # Команды в обратных кавычках
-        r'https?://[^\s]+',       # URL-ссылки
-        r'[A-Za-z0-9._-]+\.[a-z]+',  # Архивы и имена файлов
+        r'`[^`]+`',                # Команды в обратных кавычках
+        r'https?://[^\s]+',        # URL-ссылки
+        r'[A-Za-z0-9._-]+\.[a-z]+', # Архивы и имена файлов
     ]
 
     # Найти все совпадения
@@ -46,7 +48,7 @@ def translate_text(text, src_lang='en', dest_lang='ru'):
         text = text.replace(match, placeholder)
 
     # Перевести оставшийся текст
-    translated = GoogleTranslator(source=src_lang, target=dest_lang).translate(text)
+    translated = translator.translate(text)
 
     # Вернуть совпадения на их место
     for placeholder, match in placeholders.items():
@@ -67,7 +69,7 @@ def translate_html(input_file, output_file, src_lang='en', dest_lang='ru'):
             soup = BeautifulSoup(infile, 'html.parser')
 
         # Перевод всех текстовых элементов в HTML
-        for element in soup.find_all(text=True):
+        for element in soup.find_all(string=True):
             if shutdown_flag:
                 return
             if element.parent.name not in ['script', 'style', 'code', 'pre']:  # Исключаем теги скриптов и стилей
