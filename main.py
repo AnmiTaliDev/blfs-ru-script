@@ -6,7 +6,6 @@ import shutil
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import signal
-import sys
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -76,6 +75,10 @@ def translate_html(input_file, output_file, src_lang='en', dest_lang='ru'):
                 if translated_text:
                     element.string.replace_with(translated_text)
 
+        # Удаление строки <?xml version="1.0" encoding="utf-8" standalone="no"?>
+        if soup.contents and str(soup.contents[0]).startswith('<?xml'):
+            soup.contents[0].extract()
+
         # Запись переведённого HTML в новый файл
         with open(output_file, 'w', encoding='utf-8') as outfile:
             outfile.write(str(soup))
@@ -97,11 +100,27 @@ def copy_file(input_file, output_file):
     except Exception as e:
         logging.error(f"Ошибка при копировании файла {input_file}: {e}")
 
+def copy_directory_structure(src_directory, dest_directory):
+    """
+    Копирует структуру директорий из исходной директории в целевую.
+    """
+    for root, dirs, files in os.walk(src_directory):
+        for dir in dirs:
+            src_dir = os.path.join(root, dir)
+            relative_path = os.path.relpath(src_dir, src_directory)
+            dest_dir = os.path.join(dest_directory, relative_path)
+            os.makedirs(dest_dir, exist_ok=True)
+            logging.info(f"Директория создана: {src_dir} -> {dest_dir}")
+
 def translate_directory(src_directory, dest_directory, src_lang='en', dest_lang='ru'):
     """
     Обрабатывает все файлы в указанной директории и её подпапках, сохраняя структуру.
     """
-    tasks = []
+    # Сначала копируем структуру директорий
+    copy_directory_structure(src_directory, dest_directory)
+
+    copy_tasks = []
+    translate_tasks = []
 
     # Пройти по всем файлам в директории и подпапках
     for root, dirs, files in os.walk(src_directory):
@@ -112,18 +131,29 @@ def translate_directory(src_directory, dest_directory, src_lang='en', dest_lang=
             relative_path = os.path.relpath(input_file, src_directory)
             output_file = os.path.join(dest_directory, relative_path)
 
-            # Создаём директорию, если её ещё нет
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
-
             if file.lower().endswith(('.html', '.htm')):  # Проверяем, что файл является HTML
                 # Добавляем задачу на перевод
-                tasks.append((translate_html, input_file, output_file, src_lang, dest_lang))
+                translate_tasks.append((translate_html, input_file, output_file, src_lang, dest_lang))
             else:
                 # Добавляем задачу на копирование
-                tasks.append((copy_file, input_file, output_file))
+                copy_tasks.append((copy_file, input_file, output_file))
 
+    # Сначала выполняем задачи копирования
     with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_task = {executor.submit(task[0], *task[1:]): task for task in tasks}
+        future_to_task = {executor.submit(task[0], *task[1:]): task for task in copy_tasks}
+
+        for future in as_completed(future_to_task):
+            if shutdown_flag:
+                break
+            task = future_to_task[future]
+            try:
+                future.result()
+            except Exception as e:
+                logging.error(f"Ошибка при выполнении задачи {task}: {e}")
+
+    # Затем выполняем задачи перевода
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_task = {executor.submit(task[0], *task[1:]): task for task in translate_tasks}
 
         for future in as_completed(future_to_task):
             if shutdown_flag:
